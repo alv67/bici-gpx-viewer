@@ -27,10 +27,20 @@ html,body{margin:0;height:100%;font-family:Inter,system-ui,-apple-system,Segoe U
 .addr{font-size:12px;margin:6px 0;line-height:1.4}
 .addr small{color:var(--muted);display:block;font-size:11px}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
-#map{flex:1}
+#map{flex:1;min-height:300px;z-index:0}
 .row{display:flex;gap:8px}
-button{flex:1;border:0;border-radius:10px;padding:8px;cursor:pointer;background:#e2e8f0}
+button{flex:1;border:0;border-radius:10px;padding:10px;cursor:pointer;background:#e2e8f0;font-size:14px;min-height:44px}
 button.primary{background:var(--text);color:#fff}
+@media (max-width:768px){
+  #app{flex-direction:column;height:100dvh}
+  #side{width:100%;min-width:0;max-height:52vh;overflow:auto}
+  #head{border-radius:0;padding:12px 14px}
+  #head h2{font-size:18px}
+  #drop{padding:14px;font-size:14px}
+  #map{min-height:48vh;flex:1}
+  .kpis{grid-template-columns:1fr 1fr 1fr;gap:6px}
+  .kpi b{font-size:14px}
+}
 </style>
 </head>
 <body>
@@ -134,6 +144,9 @@ drop.onclick=function(){ document.getElementById('files').click(); };
 ['dragover','dragenter'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); }); });
 drop.addEventListener('drop',function(e){ e.preventDefault(); if(e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
 document.getElementById('clear').onclick=function(){ layers.clearLayers(); document.getElementById('stats').innerHTML=''; ci=0; };
+setTimeout(function(){ map.invalidateSize(); }, 300);
+window.addEventListener('resize', function(){ map.invalidateSize(); });
+window.addEventListener('orientationchange', function(){ setTimeout(function(){ map.invalidateSize(); }, 300); });
 </script>
 </body>
 </html>
