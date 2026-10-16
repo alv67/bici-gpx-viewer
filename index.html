@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>🚲 Bici Viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{--bg:#f2f4f8;--card:#fff;--accent:#16a34a;--accent2:#2563eb;--text:#0f172a;--muted:#64748b}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text);background:var(--bg)}
+#app{display:flex;height:100%}
+#side{width:380px;min-width:320px;display:flex;flex-direction:column;background:var(--bg)}
+#head{background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;padding:18px;border-radius:0 0 18px 18px;box-shadow:0 4px 16px rgba(0,0,0,.15)}
+#head h2{margin:0;font-size:20px}
+#head p{margin:6px 0 12px;font-size:13px;opacity:.92}
+#drop{background:rgba(255,255,255,.18);border:2px dashed rgba(255,255,255,.7);border-radius:12px;padding:12px;text-align:center;cursor:pointer;font-size:13px}
+#drop:hover{background:rgba(255,255,255,.28)}
+#list{padding:12px;overflow:auto}
+.card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 2px 10px rgba(0,0,0,.07)}
+.card h3{margin:0 0 4px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:10px 0}
+.kpi{background:#f8fafc;border-radius:10px;padding:8px;text-align:center}
+.kpi b{display:block;font-size:16px}
+.kpi span{font-size:11px;color:var(--muted)}
+.addr{font-size:12px;margin:6px 0;line-height:1.4}
+.addr small{color:var(--muted);display:block;font-size:11px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+#map{flex:1}
+.row{display:flex;gap:8px}
+button{flex:1;border:0;border-radius:10px;padding:8px;cursor:pointer;background:#e2e8f0}
+button.primary{background:var(--text);color:#fff}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="side">
+<div id="head">
+<h2>🚲 I miei giri in bici</h2>
+<p>Carica i file .gpx e rivivi i tuoi percorsi sulla mappa.</p>
+<div id="drop">Trascina qui i .gpx o clicca per sceglierli<input type="file" id="files" multiple accept=".gpx,.xml" style="display:none"></div>
+</div>
+<div id="list"><div id="stats"></div>
+<div class="row"><button id="clear">Pulisci</button></div>
+</div>
+</div>
+<div id="map"></div>
+</div>
+<script>
+var map = L.map('map').setView([45.047, 7.66], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+var layers = L.featureGroup().addTo(map);
+var colors = ['#2563eb','#dc2626','#16a34a','#ea580c','#7c3aed','#0891b2'];
+var TH = 1; // soglia fissa interna
+
+function hav(a,b){
+  var R=6371000, r=Math.PI/180;
+  var dLa=(b[0]-a[0])*r, dLo=(b[1]-a[1])*r;
+  var la1=a[0]*r, la2=b[0]*r;
+  var h=Math.sin(dLa/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function fixTrack(raw){
+  var res=[raw[0].slice()], absIdx=[0];
+  for(var i=1;i<raw.length;i++){
+    var dLa=raw[i][0]-raw[i-1][0], dLo=raw[i][1]-raw[i-1][1];
+    if(Math.abs(dLa)>TH || Math.abs(dLo)>TH){
+      res.push([raw[i][0]-raw[i-1][0], raw[i][1]-raw[i-1][1]]);
+      absIdx.push(res.length-1);
+    } else res.push([res[res.length-1][0]+dLa, res[res.length-1][1]+dLo]);
+  }
+  return {pts:res, absIdx:absIdx};
+}
+function parseGPX(text){
+  var xml=new DOMParser().parseFromString(text,'application/xml');
+  var pts=xml.getElementsByTagName('trkpt'), out=[], times=[];
+  for(var i=0;i<pts.length;i++){
+    out.push([parseFloat(pts[i].getAttribute('lat')), parseFloat(pts[i].getAttribute('lon'))]);
+    var t=pts[i].getElementsByTagName('time')[0];
+    times.push(t?t.textContent:null);
+  }
+  return {pts:out, times:times};
+}
+function shortAddr(a){
+  if(!a) return 'Indirizzo non trovato';
+  var p=[];
+  if(a.road) p.push(a.house_number?a.road+' '+a.house_number:a.road);
+  if(a.suburb) p.push(a.suburb); else if(a.neighbourhood) p.push(a.neighbourhood);
+  if(a.city||a.town||a.village) p.push(a.city||a.town||a.village);
+  if(a.postcode) p.push(a.postcode);
+  return p.join(', ')||'Indirizzo non trovato';
+}
+async function revLabel(lat,lon){
+  try{
+    var r=await fetch('https://nominatim.openstreetmap.org/reverse?lat='+lat+'&lon='+lon+'&format=json&addressdetails=1&zoom=18&accept-language=it');
+    return shortAddr((await r.json()).address);
+  }catch(e){ return 'Indirizzo non disponibile'; }
+}
+function fmtDur(s){
+  if(s==null||s<=0) return '—';
+  var m=Math.round(s/60); return m<60? m+' min' : Math.floor(m/60)+'h '+(m%60)+'m';
+}
+function showFile(name,text,color){
+  var g=parseGPX(text);
+  if(!g.pts.length) return;
+  var fixed=fixTrack(g.pts), p=fixed.pts, tot=0;
+  for(var i=1;i<p.length;i++) tot+=hav(p[i-1],p[i]);
+  var t0=g.times.find(Boolean), t1=[...g.times].reverse().find(Boolean);
+  var dur=(t0&&t1)?(new Date(t1)-new Date(t0))/1000:null;
+  var vmed=(dur&&dur>0)?tot/dur*3.6:null;
+  L.polyline(p,{color:color,weight:5,opacity:.9}).addTo(layers);
+  fixed.absIdx.forEach(function(idx){ L.circleMarker(p[idx],{radius:3,color:'#e67e22',fillColor:'#e67e22',fillOpacity:1,weight:1}).addTo(layers); });
+  var m0=L.marker(p[0]).addTo(layers), m1=L.marker(p[p.length-1]).addTo(layers);
+  map.fitBounds(layers.getBounds().pad(0.2));
+  var uid=Math.random().toString(36).slice(2);
+  var el=document.createElement('div'); el.className='card';
+  el.innerHTML='<h3><span class="dot" style="background:'+color+'"></span>'+name+'</h3>'
+    +'<div class="kpis"><div class="kpi"><b>'+(tot/1000).toFixed(2)+' km</b><span>distanza</span></div>'
+    +'<div class="kpi"><b>'+fmtDur(dur)+'</b><span>durata</span></div>'
+    +'<div class="kpi"><b>'+(vmed==null?'—':vmed.toFixed(1)+' km/h')+'</b><span>media</span></div></div>'
+    +'<div class="addr">🟢 <b id="a0-'+uid+'">Localizzo partenza…</b><small>'+p[0][0].toFixed(5)+', '+p[0][1].toFixed(5)+'</small></div>'
+    +'<div class="addr">🏁 <b id="a1-'+uid+'">Localizzo arrivo…</b><small>'+p[p.length-1][0].toFixed(5)+', '+p[p.length-1][1].toFixed(5)+'</small></div>';
+  document.getElementById('stats').prepend(el);
+  revLabel(p[0][0],p[0][1]).then(function(t){ var e=document.getElementById('a0-'+uid); if(e)e.textContent=t; m0.bindPopup('🟢 Partenza<br>'+t); });
+  revLabel(p[p.length-1][0],p[p.length-1][1]).then(function(t){ var e=document.getElementById('a1-'+uid); if(e)e.textContent=t; m1.bindPopup('🏁 Arrivo<br>'+t); });
+}
+var ci=0;
+function loadFiles(files){ Array.from(files).forEach(function(f){ var r=new FileReader(); r.onload=function(){ showFile(f.name,r.result,colors[ci++%colors.length]); }; r.readAsText(f); }); }
+document.getElementById('files').addEventListener('change',function(e){ loadFiles(e.target.files); });
+var drop=document.getElementById('drop');
+drop.onclick=function(){ document.getElementById('files').click(); };
+['dragover','dragenter'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); }); });
+drop.addEventListener('drop',function(e){ e.preventDefault(); if(e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
+document.getElementById('clear').onclick=function(){ layers.clearLayers(); document.getElementById('stats').innerHTML=''; ci=0; };
+</script>
+</body>
+</html>
